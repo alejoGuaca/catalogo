@@ -1,0 +1,10 @@
+# Evitar archivos ocultos de Windows y Mac
+.DS_Store
+Thumbs.db
+
+# Evitar basura de Python
+__pycache__/
+*.pyc
+
+# Evitar contraseñas locales si alguna vez usas un archivo .env
+.env
