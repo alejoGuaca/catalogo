@@ -2,9 +2,8 @@ import psycopg2
 import os
 import streamlit as st
 import streamlit.components.v1 as components
-
-# --- REEMPLAZA ESTA URL POR LA TUYA DE SUPABASE ---
-DATABASE_URL = "postgresql://postgres.mcluogcayzabrosunjth:Familia#99Share@aws-1-us-east-2.pooler.supabase.com:5432/postgres"
+import base64
+import mimetypes
 
 # ── 1. Configuración de página ──────────────────────────────────────────────
 st.set_page_config(
@@ -13,7 +12,20 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── 2. CSS global ─────────────────────────────────────────────────────────────
+# ── 2. Endpoint Liviano para UptimeRobot ────────────────────────────────────
+# Si UptimeRobot visita la web con ?ping=true, responde rápido y no carga el resto.
+if st.query_params.get("ping") == "true":
+    try:
+        conn = psycopg2.connect(st.secrets["DATABASE_URL"])
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        conn.close()
+        st.write("🟢 OK - Servicio Activo")
+    except Exception as e:
+        st.error(f"🔴 Error de conexión: {e}")
+    st.stop()  # Detiene la ejecución para no gastar recursos
+
+# ── 3. CSS global ─────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Raleway:wght@300;400;500;600&display=swap');
@@ -92,10 +104,11 @@ footer { visibility: hidden; } #MainMenu { visibility: visible; } .stDeployButto
 """, unsafe_allow_html=True)
 
 
-# ── 3. Base de datos PostgreSQL ───────────────────────────────────────────────
+# ── 4. Base de datos PostgreSQL con Caché ─────────────────────────────────────
+@st.cache_data(ttl=600, show_spinner=False)
 def obtener_datos(query, params=()):
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = psycopg2.connect(st.secrets["DATABASE_URL"])
         cur = conn.cursor()
         cur.execute(query, params)
         datos = cur.fetchall()
@@ -105,7 +118,7 @@ def obtener_datos(query, params=()):
         st.error(f"❌ Error en la base de datos (Supabase): {e}")
         st.stop()
 
-
+@st.cache_data(ttl=600, show_spinner=False)
 def obtener_imagenes(disfraz_id):
     filas = obtener_datos(
         "SELECT imagen_nombre FROM disfraz_imagenes WHERE disfraz_id = %s ORDER BY orden ASC",
@@ -118,16 +131,15 @@ def obtener_imagenes(disfraz_id):
             rutas.append(ruta)
     return rutas
 
-
 def imagen_a_base64(ruta):
-    import base64, mimetypes
     mime, _ = mimetypes.guess_type(ruta)
     mime = mime or "image/jpeg"
     with open(ruta, "rb") as f:
         data = base64.b64encode(f.read()).decode("utf-8")
     return f"data:{mime};base64,{data}"
 
-# HTML functions unchanged...
+
+# ── 5. Componentes HTML ───────────────────────────────────────────────────────
 def tarjeta_html(nombre, talla_texto, imagenes, card_height=400):
     imgs_b64 =[]
     for ruta in imagenes:
@@ -151,7 +163,8 @@ def carrusel_detalle_html(imagenes, altura=520):
     controles = '<button class="arrow left" onclick="cambiar(-1)">&#8249;</button><button class="arrow right" onclick="cambiar(1)">&#8250;</button><div class="dots" id="dots"></div><div class="counter" id="counter"></div>' if total > 1 else ""
     return f"""<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>* {{ box-sizing:border-box; margin:0; padding:0; }} body {{ background:#0a090f; font-family:sans-serif; }} .zone {{ position:relative; width:100%; height:{altura}px; overflow:hidden; background:linear-gradient(135deg,#1a1624,#110e1a); border-radius:16px; border:1px solid rgba(180,130,255,0.2); }} .slide-img {{ width:100%; height:100%; object-fit:contain; object-position:center; display:block; user-select:none; -webkit-user-drag:none; pointer-events:none; }} .arrow {{ position:absolute; top:50%; transform:translateY(-50%); z-index:30; width:46px; height:46px; border-radius:50%; border:1px solid rgba(192,132,252,0.5); background:rgba(10,9,15,0.7); color:#c084fc; font-size:1.8rem; display:flex; align-items:center; justify-content:center; cursor:pointer; backdrop-filter:blur(6px); transition:background .2s; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }} .arrow.left {{ left:14px; }} .arrow.right {{ right:14px; }} .arrow:hover {{ background:rgba(192,132,252,0.3); }} .arrow:active {{ transform:translateY(-50%) scale(0.9); }} .dots {{ position:absolute; bottom:14px; left:50%; transform:translateX(-50%); z-index:30; display:flex; gap:6px; align-items:center; background:rgba(10,9,15,0.5); padding:6px 12px; border-radius:20px; backdrop-filter:blur(4px); pointer-events:none; }} .dot {{ width:7px; height:7px; border-radius:50%; background:rgba(255,255,255,0.35); transition:all .25s; }} .dot.active {{ background:#c084fc; width:20px; border-radius:4px; }} .counter {{ position:absolute; top:14px; right:14px; background:rgba(10,9,15,0.55); color:#c084fc; font-size:.75rem; padding:4px 10px; border-radius:20px; backdrop-filter:blur(4px); letter-spacing:.06em; }} @media (hover:none) {{ .arrow {{ opacity:0.85; }} }}</style></head><body><div class="zone" id="zone"><img class="slide-img" id="mainImg" src="" alt="disfraz">{controles}</div><script>(function() {{ var imgs={imgs_js}; var total=imgs.length; var cur=0; var startX=0; function update() {{ document.getElementById('mainImg').src=imgs[cur]; if(total>1) {{ var d=document.getElementById('dots'); d.innerHTML=''; for(var i=0;i<total;i++) {{ var s=document.createElement('span'); s.className='dot'+(i===cur?' active':''); d.appendChild(s); }} document.getElementById('counter').textContent=(cur+1)+'/'+total; }} }} window.cambiar=function(dir){{ cur=(cur+dir+total)%total; update(); }}; var z=document.getElementById('zone'); z.addEventListener('touchstart',function(e){{ startX=e.changedTouches[0].clientX; }},{{passive:true}}); z.addEventListener('touchend',function(e){{ var dx=e.changedTouches[0].clientX-startX; if(Math.abs(dx)>40) window.cambiar(dx<0?1:-1); }},{{passive:true}}); update(); }})();</script></body></html>"""
 
-# ── 4. Leer query params ───────────────────────────────────────────────────────
+
+# ── 6. Leer query params (Vista Individual de Disfraz) ────────────────────────
 params = st.query_params
 disfraz_id_param = params.get("disfraz", None)
 
@@ -198,7 +211,7 @@ if disfraz_id_param:
     st.stop()
 
 
-# ── Vista Catálogo Principal ──────────────────────────────────────────────────
+# ── 7. Vista Catálogo Principal ───────────────────────────────────────────────
 with st.sidebar:
     st.markdown("""<div style='padding:1.2rem 0 .5rem; text-align:center;'><div style='font-family:"Cinzel Decorative",cursive; font-size:1rem; background:linear-gradient(135deg,#f0c060,#c084fc); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; filter:drop-shadow(0 0 8px rgba(192,132,252,0.4));'>🎭 DISFRACES</div><div style='height:1px; background:linear-gradient(90deg,transparent,rgba(192,132,252,0.4),transparent); margin:.8rem 0 1.5rem;'></div></div><p style='font-size:.7rem; letter-spacing:.12em; text-transform:uppercase; color:#8b7fa8; margin-bottom:.5rem;'>Categorías</p>""", unsafe_allow_html=True)
     
